@@ -1,4 +1,4 @@
-# Peacesign Style
+# propagate-yourself style
 
 This project follows the virtues in `../garden/STYLE.md`.
 
@@ -11,7 +11,7 @@ This project follows the virtues in `../garden/STYLE.md`.
 - Use oxlint and Prettier for TypeScript and Ruff for future Python research.
 - Run Python through `uv run`, never bare `python` or `python3`.
 - Observability: Track model-fitting runs in Weights & Biases; use Cloudflare observability for runtime operations.
-- Place run instructions in `README.md`.
+- Place run instructions in `README.md` after each significant update
 - Do not remove user comments in any scripts
 - Put representative visual output in `examples`; keep scratch output untracked.
 - Never commit plaintext secrets. Use committed `.env.op` references after the

@@ -13,11 +13,17 @@ uv sync
 
 
 ## tools
-1) a simple ct viewer to sanity check downloaded ct\
-`uv run python acoustics/view_ct.py`\
+1) a simple ct viewer to sanity check downloaded ct in `acoustics/`
+
+`uv run python acoustics/view_ct.py`
+
 keys: `z` axial, `y` coronal, `x` sagittal (key = scrubbed axis)
 
-2) a meter that tracks the amount of compute and latency spent by autoresearch when running an experiment
+2) an evaluation tool for feynman research runs. it uses the [stanford helm](https://github.com/stanford-crfm/helm/blob/main/docs/code.md) design, tracking time and token usage:
+
+`uv run helm-mirror run`
+
+under the `tools/` directory, the problem set lives in `instructions`. you can configure runs in `run_specs.yaml`, evaluation results land in `outputs/`. the extensive feynman artifacts are in its own directory under `autoresearch/runs/`
 
 3) a graph ingestor, differentiator and evaluator
 

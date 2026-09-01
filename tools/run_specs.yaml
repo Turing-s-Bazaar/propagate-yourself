@@ -1,0 +1,32 @@
+run_id: fus-baseline
+name: "FUS simulation problem set"
+
+outputs_dir: tools/outputs
+feynman_runs_dir: autoresearch/runs
+
+scenario:
+  class_name: tools.helm_mirror.scenario.FUSScenario
+  args:
+    instructions_dir: tools/instructions
+
+adapter:
+  class_name: tools.helm_mirror.adapter.FeynmanAdapter
+  args:
+    feynman_command: ["feynman"]
+    process_cwd: autoresearch
+    mode: json
+    model: ""
+    thinking: high
+
+executor:
+  class_name: tools.helm_mirror.executor.FeynmanExecutor
+
+execution:
+  max_workers: 2
+  timeout_s: 3600
+
+metrics:
+  - class_name: tools.helm_mirror.metric.TimeMetric
+    args: {}
+  - class_name: tools.helm_mirror.metric.TokensMetric
+    args: {}

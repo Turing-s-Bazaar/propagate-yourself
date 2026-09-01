@@ -2,3 +2,5 @@
 dataset/
 __pycache__/
 *.pyc
+tools/outputs/
+autoresearch/runs/
