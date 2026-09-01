@@ -1,0 +1,334 @@
+---
+import Layout from "@/layouts/main.astro"
+import { Button } from "@/components/ui/button"
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card"
+
+const workflows = [
+  { command: "/deepresearch", description: "Multi-agent investigation across papers, web, and code" },
+  { command: "rank", description: "PaperRank scoring for what to read first, with graph and methodology evidence" },
+  { command: "/lit", description: "Literature review from primary sources with consensus mapping" },
+  { command: "/review", description: "Internal research critique with severity scores and a revision plan" },
+  { command: "/audit", description: "Paper-to-code mismatch audit for reproducibility claims" },
+  { command: "/replicate", description: "Replication plan with environment choice before any execution" },
+  { command: "/recipe", description: "Ranked ML training recipes grounded in papers, datasets, docs, and code" },
+  { command: "/compare", description: "Side-by-side source comparison with agreement and conflict matrix" },
+  { command: "/draft", description: "Polished paper-style draft with inline citations from findings" },
+  { command: "/autoresearch", description: "Bounded loop: hypothesize, experiment, measure, repeat" },
+  { command: "/watch", description: "Research watch baseline with optional scheduled follow-up" },
+]
+
+const agents = [
+  { name: "Researcher", description: "Hunts for evidence across papers, the web, repos, and docs" },
+  { name: "Reviewer", description: "Grades claims by severity, flags gaps, and suggests revisions" },
+  { name: "Writer", description: "Structures notes into briefs, drafts, and paper-style output" },
+  { name: "Verifier", description: "Checks citations, verifies URLs, removes dead links" },
+]
+
+const sources = [
+  { name: "Feynman Bio Tools", description: "Open science connectors for literature, PubMed metadata, ID conversion, related articles, citation matching, copyright checks, PMC full-text routing, bioRxiv/medRxiv preprint windows, DOI lookup, published links, funder/ROR lookup, preprint statistics, Europe PMC open-access full-text sections, citation graphs, authors, venues, OA status, ClinicalTrials.gov trial details, sponsors, eligibility, investigators, endpoints, Grants.gov opportunities, FDA labels, adverse events, recalls, Drugs@FDA applications, application counts, pharmacologic classes, generic equivalents, ChEMBL compounds, drug indications, ADMET properties, bioactivity, mechanisms, targets, genes, BioMart, CellGuide, PanglaoDB marker genes and gene-to-cell-type lookup, Antibody Registry RRIDs and catalog lookups, reagents, cell types, metabolomics, genome tracks, exact ENCODE/JASPAR/UniBind regulation workflows, UniBind TF-DNA binding, exact gnomAD/CADD/ClinVar/dbSNP variant workflows, GTEx expression and eQTL workflows, KEGG cross-links and ID conversions, InterPro/Pfam protein domains, Rfam RNA family models and sequence search, ArrayExpress/GEO/MetaboLights/MGnify/PRIDE archive project, sample, file, analysis, and protein-evidence workflows, Human Protein Atlas records, STRING networks and homology, purchasable ZINC compounds, GWAS, eQTLs, proteins, predicted structures, EM maps, complexes, interactions, omics, chemistry, pathways, and canceromics" },
+  { name: "AlphaXiv", description: "Paper search, Q&A, code reading, and annotations via the alpha CLI", href: "https://alphaxiv.org" },
+  { name: "Hugging Face Hub", description: "Dataset schema, repo file, and small text-file inspection" },
+  { name: "Web search", description: "Searches via Exa, Perplexity, or Gemini API" },
+  { name: "Session search", description: "Indexed recall across prior research sessions" },
+  { name: "Preview", description: "Local viewers for reports, PDFs, media, spreadsheets, notebooks, LaTeX, KET/RXN/CDXML/CXSMILES chemistry, structures, genomes, alignments, trees, and tensors" },
+]
+
+const workbenchFeatures = [
+  { name: "Project control plane", description: "Projects, sessions, frame records, upload-frame links, frame health records, onboarding context, and specialist selection stay in Feynman's workspace state" },
+  { name: "Pi chat and tools", description: "Chat runs through local Pi sessions with frame rows, frame message rows, transcripts, tool activity, attachments, and command insertion" },
+  { name: "Science artifacts", description: "Reports, data files, media, spreadsheets, notebooks, LaTeX, chemistry sketches, structures, genomes, previews, versions, lineage, execution logs, and verification checks are browsable together" },
+  { name: "Feynman-owned setup", description: "Bio connectors, frame records, frame message records, frame health records, watch routine records, skill source/license records, setup decision records, review feedback records, compute poller leases, memory categories, permissions, compute providers, and redacted credential availability do not depend on another local app" },
+]
+
+const compute = [
+  { name: "Docker", description: "Isolated containers for explicitly chosen replication and benchmark runs", href: "https://www.docker.com/" },
+  { name: "Modal", description: "Burst GPU execution for bounded research benchmark jobs", href: "https://modal.com/" },
+  { name: "RunPod", description: "Persistent GPU pods for long-running research experiments with SSH", href: "https://www.runpod.io/" },
+]
+
+const terminalCommands = [
+  { command: 'feynman "what do we know about scaling laws"', description: "Cited research brief from papers and web" },
+  { command: 'feynman rank "sparse autoencoders"', description: "PaperRank table with citation, graph, methodology, and reproducibility scores" },
+  { command: "feynman serve", description: "Local science workbench with Pi chat, Bio Tools, notebooks, compute, artifacts, provenance, skills, and settings" },
+  { command: 'feynman deepresearch "mechanistic interpretability"', description: "Multi-agent deep dive with synthesis and verification" },
+  { command: 'feynman lit "RLHF alternatives"', description: "Literature review with consensus and open questions" },
+  { command: "feynman audit 2401.12345", description: "Paper claims vs. what the code actually does" },
+  { command: 'feynman replicate "chain-of-thought improves math"', description: "Replication plan, compute target, gated experiment steps" },
+  { command: 'feynman recipe "fine-tune a small model for math reasoning"', description: "Ranked, implementable ML training recipes" },
+]
+
+const installCommands = [
+  { label: "curl", command: "curl -fsSL https://feynman.is/install | bash" },
+  { label: "npm", command: "npm install -g @companion-ai/feynman" },
+]
+---
+
+<Layout title="Feynman — The open source AI research agent" active="home">
+  <div class="mx-auto max-w-5xl px-6">
+
+    <section class="flex flex-col items-center gap-8 pb-16 pt-20 text-center">
+      <div class="flex max-w-3xl flex-col gap-4">
+        <h1 class="text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
+          The open source AI <br />research agent
+        </h1>
+        <p class="mx-auto max-w-2xl text-lg text-muted-foreground">
+          Reads papers, searches the web, writes research drafts, plans experiments, and cites research claims. Use it from the terminal or open the local science workbench for chat, artifacts, notebooks, compute, and provenance.
+        </p>
+        <p class="text-sm text-muted-foreground">
+          Made by{" "}
+          <a href="https://companion.ai" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">
+            Companion
+          </a>
+        </p>
+      </div>
+
+      <div class="flex w-full max-w-3xl flex-col items-center gap-4">
+        <div class="flex w-full max-w-full flex-col">
+          <div class="flex max-w-full self-start overflow-x-auto">
+            {installCommands.map((entry, i) => (
+              <button
+                class:list={[
+                  "install-toggle shrink-0 px-4 py-2 text-sm font-medium transition-colors cursor-pointer",
+                  i === 0 ? "rounded-tl-lg" : "",
+                  i === installCommands.length - 1 ? "rounded-tr-lg" : "",
+                  entry.label === installCommands[0].label
+                    ? "bg-muted text-foreground"
+                    : "bg-muted/30 text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                ]}
+                data-command={entry.command}
+                aria-label={`Show ${entry.label} install command`}
+              >
+                {entry.label}
+              </button>
+            ))}
+          </div>
+          <button
+            id="install-cmd"
+            class="group flex w-full min-w-0 max-w-full items-start justify-between gap-3 rounded-b-lg rounded-tr-lg bg-muted px-4 py-3 text-left font-mono text-xs transition-colors hover:bg-muted/80 cursor-pointer sm:items-center sm:text-sm"
+            data-command={installCommands[0].command}
+            aria-label="Copy install command"
+          >
+            <span id="install-command" class="flex-1 min-w-0 break-all whitespace-normal leading-relaxed sm:overflow-hidden sm:text-ellipsis sm:whitespace-nowrap">{installCommands[0].command}</span>
+            <svg id="install-copy" class="mt-0.5 size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground sm:mt-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            <svg id="install-check" class="mt-0.5 hidden size-4 shrink-0 text-primary sm:mt-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
+          </button>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-center gap-3">
+          <a href="/docs/getting-started/installation">
+            <Button client:load size="lg">Get Started</Button>
+          </a>
+          <a href="https://github.com/companion-inc/feynman" target="_blank" rel="noopener noreferrer" class="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-input bg-background px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+            GitHub
+          </a>
+        </div>
+
+        <p class="text-sm text-muted-foreground">
+          Use curl for the bundled runtime, or npm if you already manage Node locally.
+        </p>
+
+        <p class="text-sm text-muted-foreground">
+          Need just the skills? <a href="/docs/getting-started/installation" class="text-primary hover:underline">Install the skills-only bundle</a>.
+        </p>
+      </div>
+
+      <img src="/hero.png" class="w-full" alt="Feynman CLI" />
+    </section>
+
+    <section class="py-16">
+      <div class="flex flex-col items-center gap-8 text-center">
+        <div class="flex flex-col gap-2">
+          <h2 class="text-2xl font-bold sm:text-3xl">Local science workbench</h2>
+          <p class="max-w-2xl text-muted-foreground">
+            `feynman serve` opens a standalone Feynman app for research runs that need chat, files, tools, notebooks, and audit trails in one place.
+          </p>
+        </div>
+        <div class="grid w-full gap-4 sm:grid-cols-2">
+          {workbenchFeatures.map((feature) => (
+            <Card client:load size="sm" className="text-left">
+              <CardHeader client:load>
+                <CardTitle client:load>{feature.name}</CardTitle>
+                <CardDescription client:load>{feature.description}</CardDescription>
+              </CardHeader>
+            </Card>
+          ))}
+        </div>
+        <a href="/docs/getting-started/workbench">
+          <Button client:load variant="outline">Open Workbench Docs</Button>
+        </a>
+      </div>
+    </section>
+
+    <section class="py-16">
+      <div class="flex flex-col items-center gap-8 text-center">
+        <div class="flex flex-col gap-2">
+          <h2 class="text-2xl font-bold tracking-tight sm:text-3xl">What you type &rarr; what happens</h2>
+          <p class="text-muted-foreground">Ask a research question or run a workflow. Research claims carry citations.</p>
+        </div>
+        <Card client:load className="w-full text-left">
+          <CardContent client:load>
+            <div class="flex flex-col gap-3 font-mono text-sm">
+              {terminalCommands.map((cmd) => (
+                <div class="flex flex-col gap-0.5">
+                  <span class="text-primary">{cmd.command}</span>
+                  <span class="text-xs text-muted-foreground">{cmd.description}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </section>
+
+    <section class="py-16">
+      <div class="flex flex-col items-center gap-8 text-center">
+        <div class="flex flex-col gap-2">
+          <h2 class="text-2xl font-bold tracking-tight sm:text-3xl">Workflows</h2>
+          <p class="text-muted-foreground">Slash commands or natural language. Your call.</p>
+        </div>
+        <div class="grid w-full gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {workflows.map((wf) => (
+            <Card client:load size="sm">
+              <CardHeader client:load>
+                <CardTitle client:load className="font-mono text-sm text-primary">{wf.command}</CardTitle>
+                <CardDescription client:load>{wf.description}</CardDescription>
+              </CardHeader>
+            </Card>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section class="py-16">
+      <div class="flex flex-col items-center gap-8 text-center">
+        <div class="flex flex-col gap-2">
+          <h2 class="text-2xl font-bold tracking-tight sm:text-3xl">Agents</h2>
+          <p class="text-muted-foreground">Specialist agents join when the research task needs them.</p>
+        </div>
+        <div class="grid w-full gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {agents.map((agent) => (
+            <Card client:load size="sm" className="text-center">
+              <CardHeader client:load className="items-center">
+                <CardTitle client:load>{agent.name}</CardTitle>
+                <CardDescription client:load>{agent.description}</CardDescription>
+              </CardHeader>
+            </Card>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section class="py-16">
+      <div class="flex flex-col items-center gap-8 text-center">
+        <div class="flex flex-col gap-2">
+          <h2 class="text-2xl font-bold tracking-tight sm:text-3xl">Skills &amp; Tools</h2>
+          <p class="text-muted-foreground">How Feynman retrieves sources, preserves research continuity, and renders artifacts.</p>
+        </div>
+        <div class="grid w-full gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {sources.map((source) => (
+            <Card client:load size="sm" className="text-center">
+              <CardHeader client:load className="items-center">
+                <CardTitle client:load>
+                  {source.href ? (
+                    <a href={source.href} target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">
+                      {source.name}
+                    </a>
+                  ) : (
+                    source.name
+                  )}
+                </CardTitle>
+                <CardDescription client:load>{source.description}</CardDescription>
+              </CardHeader>
+            </Card>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section class="py-16">
+      <div class="flex flex-col items-center gap-8 text-center">
+        <div class="flex flex-col gap-2">
+          <h2 class="text-2xl font-bold tracking-tight sm:text-3xl">Compute</h2>
+          <p class="text-muted-foreground">Optional execution targets for research experiments after the workflow chooses an environment.</p>
+        </div>
+        <div class="grid w-full gap-4 sm:grid-cols-3">
+          {compute.map((provider) => (
+            <Card client:load size="sm" className="text-center">
+              <CardHeader client:load className="items-center">
+                <CardTitle client:load>
+                  <a href={provider.href} target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">
+                    {provider.name}
+                  </a>
+                </CardTitle>
+                <CardDescription client:load>{provider.description}</CardDescription>
+              </CardHeader>
+            </Card>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section class="flex flex-col items-center gap-6 py-20 text-center">
+      <p class="text-muted-foreground">
+        Built on <a href="https://github.com/badlogic/pi-mono" class="text-primary hover:underline">Pi</a> and <a href="https://www.alphaxiv.org/" class="text-primary hover:underline">alphaXiv</a>. Capabilities ship as Pi skills and research outputs stay source-grounded.
+      </p>
+      <div class="flex flex-wrap items-center justify-center gap-3">
+        <a href="/docs/getting-started/installation">
+          <Button client:load size="lg">Get Started</Button>
+        </a>
+        <a href="https://github.com/companion-inc/feynman" target="_blank" rel="noopener noreferrer">
+          <Button client:load variant="outline" size="lg">View on GitHub</Button>
+        </a>
+      </div>
+    </section>
+
+  </div>
+
+  <script is:inline>
+    (function () {
+      function init() {
+        var toggles = Array.from(document.querySelectorAll(".install-toggle"))
+        var btn = document.getElementById("install-cmd")
+        var text = document.getElementById("install-command")
+        var copyIcon = document.getElementById("install-copy")
+        var checkIcon = document.getElementById("install-check")
+        if (!btn || !text || !copyIcon || !checkIcon) return
+
+        toggles.forEach(function (toggle) {
+          if (toggle._b) return
+          toggle._b = true
+          toggle.addEventListener("click", function () {
+            var cmd = toggle.getAttribute("data-command")
+            if (!cmd) return
+            btn.setAttribute("data-command", cmd)
+            text.textContent = cmd
+            toggles.forEach(function (t) {
+              t.classList.remove("bg-muted", "text-foreground")
+              t.classList.add("bg-muted/30", "text-muted-foreground", "hover:text-foreground", "hover:bg-muted/50")
+            })
+            toggle.classList.remove("bg-muted/30", "text-muted-foreground", "hover:text-foreground", "hover:bg-muted/50")
+            toggle.classList.add("bg-muted", "text-foreground")
+          })
+        })
+
+        if (!btn._b) {
+          btn._b = true
+          btn.addEventListener("click", function () {
+            var cmd = btn.getAttribute("data-command")
+            if (!cmd) return
+            navigator.clipboard.writeText(cmd).then(function () {
+              copyIcon.classList.add("hidden")
+              checkIcon.classList.remove("hidden")
+              setTimeout(function () {
+                copyIcon.classList.remove("hidden")
+                checkIcon.classList.add("hidden")
+              }, 2000)
+            })
+          })
+        }
+      }
+      init()
+      document.addEventListener("astro:after-swap", init)
+    })()
+  </script>
+</Layout>

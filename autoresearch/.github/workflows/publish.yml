@@ -1,0 +1,829 @@
+name: Publish and Release
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: publish-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      should_publish_npm: ${{ steps.version.outputs.should_publish_npm }}
+      should_release_github: ${{ steps.version.outputs.should_release_github }}
+      should_run_verify: ${{ steps.version.outputs.should_run_verify }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          registry-url: "https://registry.npmjs.org"
+      - id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Releases may only run from main; got $GITHUB_REF" >&2
+            exit 1
+          fi
+          LOCAL=$(node -p "require('./package.json').version")
+          echo "version=$LOCAL" >> "$GITHUB_OUTPUT"
+
+          PUBLISHED_SOURCE_SHA=""
+          npm_error="$RUNNER_TEMP/npm-view-version.err"
+          if PUBLISHED=$(npm view "@companion-ai/feynman@$LOCAL" version 2>"$npm_error"); then
+            :
+          elif grep -q 'E404' "$npm_error"; then
+            PUBLISHED=""
+          else
+            cat "$npm_error" >&2
+            exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$PUBLISHED" != "$LOCAL" ]; then
+            echo "Manual release runs may only reconcile an npm version already published from a main push." >&2
+            exit 1
+          fi
+          if [ "$PUBLISHED" = "$LOCAL" ]; then
+            published_integrity=$(npm view "@companion-ai/feynman@$LOCAL" dist.integrity)
+            provenance_dir="$RUNNER_TEMP/npm-provenance-version-check"
+            mkdir -p "$provenance_dir"
+            (
+              cd "$provenance_dir"
+              npm init -y >/dev/null
+              npm install --ignore-scripts --omit=dev --no-audit "@companion-ai/feynman@$LOCAL" >/dev/null
+              npx --yes npm@11.18.0 audit signatures --json --include-attestations > audit-signatures.json
+            )
+            PUBLISHED_SOURCE_SHA=$(node scripts/verify-npm-provenance.mjs \
+              "$provenance_dir/audit-signatures.json" \
+              "@companion-ai/feynman" \
+              "$LOCAL" \
+              "$published_integrity" \
+              "https://github.com/$GITHUB_REPOSITORY" \
+              ".github/workflows/publish.yml" \
+              "refs/heads/main")
+            echo "should_publish_npm=false" >> "$GITHUB_OUTPUT"
+          else
+            latest_error="$RUNNER_TEMP/npm-view-latest.err"
+            if LATEST=$(npm view "@companion-ai/feynman@latest" version 2>"$latest_error"); then
+              LOCAL="$LOCAL" LATEST="$LATEST" node <<'NODE'
+          const parse = (value) => {
+            const match = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?$/.exec(value);
+            if (!match) throw new Error(`Release version is not valid SemVer: ${value}`);
+            return match.slice(1, 4).map(Number);
+          };
+          const local = parse(process.env.LOCAL);
+          const latest = parse(process.env.LATEST);
+          const newer = local.some((value, index) =>
+            value > latest[index] && local.slice(0, index).every((part, prior) => part === latest[prior])
+          );
+          if (!newer) {
+            throw new Error(`Release version ${process.env.LOCAL} must be newer than npm latest ${process.env.LATEST}`);
+          }
+          NODE
+            elif ! grep -q 'E404' "$latest_error"; then
+              cat "$latest_error" >&2
+              exit 1
+            fi
+            echo "should_publish_npm=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          RELEASE_COMPLETE=false
+          RELEASE_EXISTS=false
+          RELEASE_TARGET=""
+          release_error="$RUNNER_TEMP/gh-release-view.err"
+          if RELEASE_JSON=$(gh release view "v$LOCAL" --json assets,isDraft,isPrerelease,tagName,targetCommitish 2>"$release_error"); then
+            RELEASE_EXISTS=true
+            RELEASE_TARGET=$(RELEASE_JSON="$RELEASE_JSON" node -e \
+              'process.stdout.write(JSON.parse(process.env.RELEASE_JSON).targetCommitish ?? "")')
+            if [ -z "$RELEASE_TARGET" ]; then
+              echo "GitHub release v$LOCAL has no target commit" >&2
+              exit 1
+            fi
+            RELEASE_COMPLETE=$(RELEASE_JSON="$RELEASE_JSON" VERSION="$LOCAL" node <<'NODE'
+          const release = JSON.parse(process.env.RELEASE_JSON);
+          const version = process.env.VERSION;
+          const expected = new Set([
+            `feynman-${version}-linux-x64.tar.gz`,
+            `feynman-${version}-linux-arm64.tar.gz`,
+            `feynman-${version}-darwin-x64.tar.gz`,
+            `feynman-${version}-darwin-arm64.tar.gz`,
+            `feynman-${version}-win32-x64.zip`,
+            "SHA256SUMS",
+          ]);
+          const assets = Array.isArray(release.assets) ? release.assets : [];
+          const actual = new Set(assets.map((asset) => asset.name));
+          const complete =
+            release.tagName === `v${version}` &&
+            release.isDraft === false &&
+            release.isPrerelease === false &&
+            assets.length === expected.size &&
+            assets.every((asset) =>
+              expected.has(asset.name) &&
+              Number(asset.size) > 0 &&
+              /^sha256:[a-f0-9]{64}$/.test(asset.digest ?? "") &&
+              typeof asset.url === "string" &&
+              asset.url.length > 0
+            ) &&
+            [...expected].every((name) => actual.has(name));
+          process.stdout.write(String(complete));
+          NODE
+            )
+          elif ! grep -qi 'release not found' "$release_error"; then
+            cat "$release_error" >&2
+            exit 1
+          fi
+
+          if [ "$RELEASE_COMPLETE" = "true" ] && [ "$PUBLISHED" = "$LOCAL" ]; then
+            if [ "$PUBLISHED_SOURCE_SHA" != "$RELEASE_TARGET" ]; then
+              echo "npm version $LOCAL provenance belongs to $PUBLISHED_SOURCE_SHA, but GitHub release v$LOCAL targets $RELEASE_TARGET" >&2
+              exit 1
+            fi
+            release_relation=$(gh api \
+              "repos/$GITHUB_REPOSITORY/compare/$RELEASE_TARGET...$GITHUB_SHA" \
+              --jq .status)
+            case "$release_relation" in
+              identical | ahead)
+                ;;
+              *)
+                echo "Published release v$LOCAL at $RELEASE_TARGET is not an ancestor of $GITHUB_SHA (status: $release_relation)" >&2
+                exit 1
+                ;;
+            esac
+          elif [ "$PUBLISHED" = "$LOCAL" ] && [ "$PUBLISHED_SOURCE_SHA" != "$GITHUB_SHA" ]; then
+            echo "Incomplete release v$LOCAL belongs to npm provenance commit $PUBLISHED_SOURCE_SHA, not $GITHUB_SHA" >&2
+            exit 1
+          fi
+
+          if \
+            [ "$RELEASE_EXISTS" = "true" ] &&
+            [ "$RELEASE_COMPLETE" != "true" ] &&
+            [ "$RELEASE_TARGET" != "$GITHUB_SHA" ]
+          then
+            echo "Incomplete GitHub release v$LOCAL targets $RELEASE_TARGET, not $GITHUB_SHA" >&2
+            exit 1
+          fi
+          if \
+            [ "$RELEASE_COMPLETE" = "true" ] &&
+            [ "$PUBLISHED" != "$LOCAL" ] &&
+            [ "$RELEASE_TARGET" != "$GITHUB_SHA" ]
+          then
+            echo "Cannot publish npm $LOCAL from $GITHUB_SHA for an existing GitHub release at $RELEASE_TARGET" >&2
+            exit 1
+          fi
+
+          if [ "$RELEASE_COMPLETE" = "true" ]; then
+            echo "should_release_github=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_release_github=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$PUBLISHED" = "$LOCAL" ] && [ "$RELEASE_COMPLETE" = "true" ]; then
+            echo "should_run_verify=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run_verify=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  verify:
+    needs: version-check
+    if: needs.version-check.outputs.should_run_verify == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      package_integrity: ${{ steps.package.outputs.integrity }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          registry-url: "https://registry.npmjs.org"
+      - id: package
+        name: Validate source, website, package, and clean consumer
+        shell: bash
+        env:
+          SHOULD_PUBLISH_NPM: ${{ needs.version-check.outputs.should_publish_npm }}
+          VERSION: ${{ needs.version-check.outputs.version }}
+        run: |
+          set -euxo pipefail
+          npm ci
+          npm test
+          npm run typecheck
+          npm run build
+          npm run architecture:check
+          npm audit --omit=dev
+          (
+            cd website
+            npm ci
+            npm run lint
+            npm run typecheck
+            npm run build
+            npm audit --omit=dev
+          )
+          git diff --check
+
+          tarball="$RUNNER_TEMP/companion-ai-feynman-$VERSION.tgz"
+          if [ "$SHOULD_PUBLISH_NPM" = "true" ]; then
+            npm pack --dry-run --json > "$RUNNER_TEMP/pack-dry-run.json"
+            npm pack --json --pack-destination "$RUNNER_TEMP" > "$RUNNER_TEMP/pack.json"
+            node scripts/verify-package-budget.mjs "$RUNNER_TEMP/pack.json" "$tarball"
+          else
+            npm_tarball_error="$RUNNER_TEMP/npm-view-tarball.err"
+            if ! npm_tarball_url=$(npm view "@companion-ai/feynman@$VERSION" dist.tarball 2>"$npm_tarball_error"); then
+              cat "$npm_tarball_error" >&2
+              exit 1
+            fi
+            test -n "$npm_tarball_url"
+            curl --fail --location --retry 5 --retry-all-errors \
+              "$npm_tarball_url" --output "$tarball"
+          fi
+          test -s "$tarball"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          integrity=$(TARBALL="$tarball" node -e \
+            'const { createHash } = require("node:crypto"); const { readFileSync } = require("node:fs"); process.stdout.write("sha512-" + createHash("sha512").update(readFileSync(process.env.TARBALL)).digest("base64"))')
+          if [ "$SHOULD_PUBLISH_NPM" = "false" ]; then
+            published_integrity=$(npm view "@companion-ai/feynman@$VERSION" dist.integrity)
+            test -n "$published_integrity"
+            test "$integrity" = "$published_integrity"
+          fi
+          echo "integrity=$integrity" >> "$GITHUB_OUTPUT"
+          if [ "$SHOULD_PUBLISH_NPM" = "true" ]; then
+            npm audit --omit=dev --prefix .feynman/npm
+            node scripts/verify-package-artifact.mjs .
+          fi
+
+          consumer="$RUNNER_TEMP/feynman-consumer"
+          mkdir -p "$consumer"
+          (cd "$consumer" && npm init -y >/dev/null)
+          npm install --prefix "$consumer" --omit=dev --no-audit "$tarball"
+          npm audit --omit=dev --prefix "$consumer"
+          bin="$consumer/node_modules/.bin/feynman"
+          test "$("$bin" --version | tail -1)" = "$(node -p "require('./package.json').version")"
+          "$bin" --help >/dev/null
+          HOME="$RUNNER_TEMP/feynman-home" FEYNMAN_HOME="$RUNNER_TEMP/feynman-home" "$bin" packages list
+          HOME="$RUNNER_TEMP/feynman-home" FEYNMAN_HOME="$RUNNER_TEMP/feynman-home" "$bin" search status
+          node scripts/verify-stale-pi-upgrade.mjs "$bin"
+          runtime_audit="$RUNNER_TEMP/feynman-runtime-audit"
+          mkdir -p "$runtime_audit"
+          runtime_archive="$consumer/node_modules/@companion-ai/feynman/.feynman/runtime-workspace.tgz"
+          if command -v cygpath >/dev/null 2>&1; then
+            runtime_archive=$(cygpath -u "$runtime_archive")
+            runtime_audit=$(cygpath -u "$runtime_audit")
+          fi
+          tar -xzf \
+            "$runtime_archive" \
+            -C "$runtime_audit"
+          npm audit --omit=dev --prefix "$runtime_audit/npm"
+          node "$consumer/node_modules/@companion-ai/feynman/scripts/verify-package-artifact.mjs" \
+            "$consumer/node_modules/@companion-ai/feynman"
+          node "$consumer/node_modules/@companion-ai/feynman/scripts/verify-installed-runtime.mjs" "$bin"
+          node "$consumer/node_modules/@companion-ai/feynman/scripts/verify-installed-docparser.mjs"
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: npm-package
+          path: ${{ steps.package.outputs.tarball }}
+          if-no-files-found: error
+
+  verify-package-consumers:
+    needs:
+      - version-check
+      - verify
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: "22.22.0"
+          - os: ubuntu-latest
+            node: "24.18.0"
+          - os: ubuntu-latest
+            node: "25"
+          - os: macos-14
+            node: "24.18.0"
+          - os: windows-latest
+            node: "24.18.0"
+          - os: windows-latest
+            node: "25"
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: npm-package
+          path: npm-package
+      - name: Verify the exact npm tarball on ${{ matrix.os }} with Node ${{ matrix.node }}
+        shell: bash
+        env:
+          VERSION: ${{ needs.version-check.outputs.version }}
+        run: |
+          set -euxo pipefail
+          count=$(find npm-package -type f -name '*.tgz' | wc -l | tr -d ' ')
+          test "$count" = "1"
+          tarball=$(find npm-package -type f -name '*.tgz' -print)
+          tarball=$(node -e 'process.stdout.write(require("node:path").resolve(process.argv[1]))' "$tarball")
+          consumer="$RUNNER_TEMP/feynman-consumer"
+          mkdir -p "$consumer"
+          (cd "$consumer" && npm init -y >/dev/null)
+          npm install --prefix "$consumer" --omit=dev --no-audit "$tarball"
+          npm audit --omit=dev --prefix "$consumer"
+          bin="$consumer/node_modules/.bin/feynman"
+          if command -v cygpath >/dev/null 2>&1; then
+            bin="$consumer/node_modules/.bin/feynman.cmd"
+          fi
+          test "$("$bin" --version | tail -1)" = "$VERSION"
+          "$bin" --help >/dev/null
+          HOME="$RUNNER_TEMP/feynman-home" FEYNMAN_HOME="$RUNNER_TEMP/feynman-home" "$bin" packages list
+          HOME="$RUNNER_TEMP/feynman-home" FEYNMAN_HOME="$RUNNER_TEMP/feynman-home" "$bin" search status
+          global_prefix="$RUNNER_TEMP/feynman-global"
+          if command -v cygpath >/dev/null 2>&1; then
+            global_prefix=$(cygpath -u "$global_prefix")
+            global_bin="$global_prefix/feynman.cmd"
+          else
+            global_bin="$global_prefix/bin/feynman"
+          fi
+          npm install --global --prefix "$global_prefix" --omit=dev --no-audit "$tarball"
+          test "$("$global_bin" --version | tail -1)" = "$VERSION"
+          "$global_bin" --help >/dev/null
+          runtime_audit="$RUNNER_TEMP/feynman-runtime-audit"
+          mkdir -p "$runtime_audit"
+          runtime_archive="$consumer/node_modules/@companion-ai/feynman/.feynman/runtime-workspace.tgz"
+          if command -v cygpath >/dev/null 2>&1; then
+            runtime_archive=$(cygpath -u "$runtime_archive")
+            runtime_audit=$(cygpath -u "$runtime_audit")
+          fi
+          tar -xzf \
+            "$runtime_archive" \
+            -C "$runtime_audit"
+          npm audit --omit=dev --prefix "$runtime_audit/npm"
+          node "$consumer/node_modules/@companion-ai/feynman/scripts/verify-package-artifact.mjs" \
+            "$consumer/node_modules/@companion-ai/feynman"
+          node "$consumer/node_modules/@companion-ai/feynman/scripts/verify-installed-runtime.mjs" "$bin"
+          node "$consumer/node_modules/@companion-ai/feynman/scripts/verify-installed-docparser.mjs"
+          global_node_modules=$(npm root --global --prefix "$global_prefix")
+          if command -v cygpath >/dev/null 2>&1; then
+            global_node_modules=$(cygpath -u "$global_node_modules")
+          fi
+          node "$global_node_modules/@companion-ai/feynman/scripts/verify-installed-runtime.mjs" "$global_bin"
+          node "$global_node_modules/@companion-ai/feynman/scripts/verify-installed-docparser.mjs"
+
+  publish-npm:
+    needs:
+      - version-check
+      - verify
+      - verify-package-consumers
+      - build-native-bundles
+    if: >-
+      github.event_name == 'push' &&
+      needs.version-check.outputs.should_publish_npm == 'true' &&
+      needs.verify.result == 'success' &&
+      needs.verify-package-consumers.result == 'success' &&
+      needs.build-native-bundles.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          registry-url: "https://registry.npmjs.org"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: npm-package
+          path: npm-package
+      - shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          mapfile -t tarballs < <(find npm-package -type f -name '*.tgz' -print)
+          test "${#tarballs[@]}" -eq 1
+          tarball="${tarballs[0]}"
+          tarball=$(node -e 'process.stdout.write(require("node:path").resolve(process.argv[1]))' "$tarball")
+          LOCAL=$(tar -xOf "$tarball" package/package.json | node -e \
+            'let source=""; process.stdin.on("data", chunk => source += chunk).on("end", () => process.stdout.write(JSON.parse(source).version))')
+          test "$LOCAL" = "${{ needs.version-check.outputs.version }}"
+          npm_error="$RUNNER_TEMP/npm-view-before-publish.err"
+          if PUBLISHED=$(npm view "@companion-ai/feynman@$LOCAL" version 2>"$npm_error"); then
+            :
+          elif grep -q 'E404' "$npm_error"; then
+            PUBLISHED=""
+          else
+            cat "$npm_error" >&2
+            exit 1
+          fi
+          if [ "$PUBLISHED" = "$LOCAL" ]; then
+            published_integrity=$(npm view "@companion-ai/feynman@$LOCAL" dist.integrity)
+            provenance_dir="$RUNNER_TEMP/npm-provenance-publish"
+            mkdir -p "$provenance_dir"
+            (
+              cd "$provenance_dir"
+              npm init -y >/dev/null
+              npm install --ignore-scripts --omit=dev --no-audit "@companion-ai/feynman@$LOCAL" >/dev/null
+              npx --yes npm@11.18.0 audit signatures --json --include-attestations > audit-signatures.json
+            )
+            published_source_sha=$(node scripts/verify-npm-provenance.mjs \
+              "$provenance_dir/audit-signatures.json" \
+              "@companion-ai/feynman" \
+              "$LOCAL" \
+              "$published_integrity" \
+              "https://github.com/$GITHUB_REPOSITORY" \
+              ".github/workflows/publish.yml" \
+              "refs/heads/main")
+            test "$published_source_sha" = "$GITHUB_SHA"
+            test "$published_integrity" = "${{ needs.verify.outputs.package_integrity }}"
+            echo "@companion-ai/feynman@$LOCAL already matches this verified commit and tarball; skipping npm publish."
+            exit 0
+          fi
+          npx npm@11.18.0 publish "$tarball" --access public --provenance
+
+  build-native-bundles:
+    needs:
+      - version-check
+      - verify
+      - verify-package-consumers
+    if: >-
+      needs.version-check.outputs.should_run_verify == 'true' &&
+      needs.verify.result == 'success' &&
+      needs.verify-package-consumers.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x64
+            os: ubuntu-latest
+          - id: linux-arm64
+            os: ubuntu-24.04-arm
+          - id: darwin-x64
+            os: macos-15-intel
+          - id: darwin-arm64
+            os: macos-14
+          - id: win32-x64
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npm run build:native-bundle
+      - name: Smoke native bundle (Unix)
+        if: matrix.id != 'win32-x64'
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          tmp=$(mktemp -d)
+          tar -xzf "dist/release/feynman-${VERSION}-${{ matrix.id }}.tar.gz" -C "$tmp"
+          bundle="$tmp/feynman-${VERSION}-${{ matrix.id }}"
+          "$bundle/feynman" --help >/tmp/feynman-help.out
+          head -20 /tmp/feynman-help.out
+          node scripts/verify-stale-pi-upgrade.mjs "$bundle/feynman"
+          "$bundle/node/bin/node" "$bundle/app/scripts/verify-installed-runtime.mjs" "$bundle/feynman"
+          "$bundle/node/bin/node" "$bundle/app/scripts/verify-installed-docparser.mjs"
+      - name: Smoke native bundle (Windows)
+        if: matrix.id == 'win32-x64'
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $tmp = Join-Path $env:RUNNER_TEMP ("feynman-smoke-" + [guid]::NewGuid().ToString("N"))
+          New-Item -ItemType Directory -Path $tmp | Out-Null
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::ExtractToDirectory(
+            (Join-Path (Get-Location) "dist/release/feynman-$version-win32-x64.zip"),
+            $tmp
+          )
+          $bundleRoot = Join-Path $tmp "feynman-$version-win32-x64"
+          & (Join-Path $bundleRoot "feynman.cmd") --help | Select-Object -First 20
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows native launcher failed --help: $LASTEXITCODE"
+          }
+          node scripts/verify-stale-pi-upgrade.mjs (Join-Path $bundleRoot "feynman.cmd")
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows native launcher failed stale-Pi upgrade smoke: $LASTEXITCODE"
+          }
+          & (Join-Path $bundleRoot "node/node.exe") `
+            (Join-Path $bundleRoot "app/scripts/verify-installed-runtime.mjs") `
+            (Join-Path $bundleRoot "feynman.cmd")
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows native launcher failed installed-runtime verification: $LASTEXITCODE"
+          }
+          & (Join-Path $bundleRoot "node/node.exe") `
+            (Join-Path $bundleRoot "app/scripts/verify-installed-docparser.mjs")
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows native launcher failed installed pi-docparser verification: $LASTEXITCODE"
+          }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-${{ matrix.id }}
+          path: dist/release/*
+
+  release-github:
+    needs:
+      - version-check
+      - verify
+      - publish-npm
+      - build-native-bundles
+    if: >-
+      always() &&
+      needs.version-check.outputs.should_release_github == 'true' &&
+      needs.verify.result == 'success' &&
+      needs.build-native-bundles.result == 'success' &&
+      (
+        needs.version-check.outputs.should_publish_npm == 'false' ||
+        needs.publish-npm.result == 'success'
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: release-assets
+          pattern: native-*
+          merge-multiple: true
+      - name: Build release notes
+        shell: bash
+        env:
+          VERSION: ${{ needs.version-check.outputs.version }}
+        run: |
+          node scripts/extract-release-notes.mjs "$VERSION" "$RUNNER_TEMP/release-notes.md"
+          (
+            cd release-assets
+            sha256sum feynman-* > SHA256SUMS
+          )
+      - name: Create GitHub release
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version-check.outputs.version }}
+        run: |
+          set -euo pipefail
+          release_error="$RUNNER_TEMP/gh-release-before-write.err"
+          if gh release view "v$VERSION" >/dev/null 2>"$release_error"; then
+            release_exists=true
+          elif grep -qi 'release not found' "$release_error"; then
+            release_exists=false
+          else
+            cat "$release_error" >&2
+            exit 1
+          fi
+          if [ "$release_exists" = "true" ]; then
+            gh release edit "v$VERSION" --draft=true --prerelease=false
+            while IFS= read -r asset; do
+              case "$asset" in
+                "feynman-$VERSION-linux-x64.tar.gz" | \
+                "feynman-$VERSION-linux-arm64.tar.gz" | \
+                "feynman-$VERSION-darwin-x64.tar.gz" | \
+                "feynman-$VERSION-darwin-arm64.tar.gz" | \
+                "feynman-$VERSION-win32-x64.zip" | \
+                "SHA256SUMS")
+                  ;;
+                *)
+                  gh release delete-asset "v$VERSION" "$asset" --yes
+                  ;;
+              esac
+            done < <(gh release view "v$VERSION" --json assets --jq '.assets[].name')
+            gh release upload "v$VERSION" release-assets/* --clobber
+          else
+            gh release create "v$VERSION" release-assets/* \
+              --title "v$VERSION" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" \
+              --target "$GITHUB_SHA" \
+              --draft
+          fi
+
+          staged_dir="$RUNNER_TEMP/staged-release"
+          mkdir -p "$staged_dir"
+          gh release download "v$VERSION" --dir "$staged_dir"
+          RELEASE_DIR="$staged_dir" VERSION="$VERSION" node <<'NODE'
+          const { readFileSync, readdirSync, statSync } = require("node:fs");
+          const version = process.env.VERSION;
+          const expectedArchives = [
+            `feynman-${version}-linux-x64.tar.gz`,
+            `feynman-${version}-linux-arm64.tar.gz`,
+            `feynman-${version}-darwin-x64.tar.gz`,
+            `feynman-${version}-darwin-arm64.tar.gz`,
+            `feynman-${version}-win32-x64.zip`,
+          ].sort();
+          const expectedFiles = [...expectedArchives, "SHA256SUMS"].sort();
+          const actualFiles = readdirSync(process.env.RELEASE_DIR).sort();
+          if (
+            JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles) ||
+            actualFiles.some((name) => statSync(`${process.env.RELEASE_DIR}/${name}`).size === 0)
+          ) {
+            throw new Error(`Staged release asset mismatch: ${actualFiles.join(", ")}`);
+          }
+          const checksumEntries = readFileSync(
+            `${process.env.RELEASE_DIR}/SHA256SUMS`,
+            "utf8",
+          ).trim().split(/\r?\n/).map((line) => {
+            const match = /^([a-f0-9]{64})\s+\*?(.+)$/.exec(line);
+            if (!match) throw new Error(`Invalid SHA256SUMS line: ${line}`);
+            return match[2];
+          }).sort();
+          if (JSON.stringify(checksumEntries) !== JSON.stringify(expectedArchives)) {
+            throw new Error(`SHA256SUMS entry mismatch: ${checksumEntries.join(", ")}`);
+          }
+          NODE
+          (cd "$staged_dir" && sha256sum -c SHA256SUMS)
+          gh release edit "v$VERSION" \
+            --title "v$VERSION" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            --draft=false \
+            --prerelease=false \
+            --latest
+
+  verify-published-state:
+    needs:
+      - version-check
+      - verify
+      - publish-npm
+      - release-github
+    if: >-
+      always() &&
+      needs.version-check.outputs.should_run_verify == 'true' &&
+      (
+        needs.version-check.outputs.should_publish_npm == 'false' ||
+        needs.publish-npm.result == 'success'
+      ) &&
+      (
+        needs.version-check.outputs.should_release_github == 'false' ||
+        needs.release-github.result == 'success'
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          registry-url: "https://registry.npmjs.org"
+      - name: Verify npm package and GitHub release
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version-check.outputs.version }}
+        run: |
+          set -euxo pipefail
+
+          npm_visibility_error="$RUNNER_TEMP/npm-view-published.err"
+          for attempt in $(seq 1 18); do
+            if published_version=$(npm view "@companion-ai/feynman@$VERSION" version 2>"$npm_visibility_error"); then
+              if [ "$published_version" != "$VERSION" ]; then
+                echo "npm returned version $published_version for @companion-ai/feynman@$VERSION" >&2
+                exit 1
+              fi
+              break
+            fi
+            if ! grep -q 'E404' "$npm_visibility_error"; then
+              cat "$npm_visibility_error" >&2
+              exit 1
+            fi
+            if [ "$attempt" -eq 18 ]; then
+              cat "$npm_visibility_error" >&2
+              echo "npm package did not become visible: @companion-ai/feynman@$VERSION" >&2
+              exit 1
+            fi
+            sleep 10
+          done
+
+          published_integrity=$(npm view "@companion-ai/feynman@$VERSION" dist.integrity)
+          test "$published_integrity" = "${{ needs.verify.outputs.package_integrity }}"
+
+          consumer="$RUNNER_TEMP/published-consumer"
+          mkdir -p "$consumer"
+          (cd "$consumer" && npm init -y >/dev/null)
+          npm_install_error="$RUNNER_TEMP/npm-install-published.err"
+          for attempt in $(seq 1 18); do
+            if npm install --prefix "$consumer" --omit=dev --no-audit \
+              "@companion-ai/feynman@$VERSION" 2>"$npm_install_error"
+            then
+              break
+            fi
+            if ! grep -q 'E404' "$npm_install_error"; then
+              cat "$npm_install_error" >&2
+              exit 1
+            fi
+            if [ "$attempt" -eq 18 ]; then
+              cat "$npm_install_error" >&2
+              echo "npm tarball did not become installable: @companion-ai/feynman@$VERSION" >&2
+              exit 1
+            fi
+            rm -rf "$consumer/node_modules" "$consumer/package-lock.json"
+            sleep 10
+          done
+          (
+            cd "$consumer"
+            npx --yes npm@11.18.0 audit signatures --json --include-attestations > audit-signatures.json
+          )
+          published_source_sha=$(node scripts/verify-npm-provenance.mjs \
+            "$consumer/audit-signatures.json" \
+            "@companion-ai/feynman" \
+            "$VERSION" \
+            "$published_integrity" \
+            "https://github.com/$GITHUB_REPOSITORY" \
+            ".github/workflows/publish.yml" \
+            "refs/heads/main")
+          test "$published_source_sha" = "$GITHUB_SHA"
+          npm audit --omit=dev --prefix "$consumer"
+          bin="$consumer/node_modules/.bin/feynman"
+          test "$("$bin" --version | tail -1)" = "$VERSION"
+          "$bin" --help >/dev/null
+          node "$consumer/node_modules/@companion-ai/feynman/scripts/verify-package-artifact.mjs" \
+            "$consumer/node_modules/@companion-ai/feynman"
+          node "$consumer/node_modules/@companion-ai/feynman/scripts/verify-installed-runtime.mjs" "$bin"
+          node "$consumer/node_modules/@companion-ai/feynman/scripts/verify-installed-docparser.mjs"
+          global_prefix="$RUNNER_TEMP/published-global"
+          npm install --global --prefix "$global_prefix" --omit=dev --no-audit \
+            "@companion-ai/feynman@$VERSION"
+          global_bin="$global_prefix/bin/feynman"
+          test "$("$global_bin" --version | tail -1)" = "$VERSION"
+          "$global_bin" --help >/dev/null
+          global_node_modules=$(npm root --global --prefix "$global_prefix")
+          node "$global_node_modules/@companion-ai/feynman/scripts/verify-installed-runtime.mjs" "$global_bin"
+          node "$global_node_modules/@companion-ai/feynman/scripts/verify-installed-docparser.mjs"
+
+          release_dir="$RUNNER_TEMP/published-release"
+          mkdir -p "$release_dir"
+          gh release download "v$VERSION" \
+            --pattern "feynman-$VERSION-*" \
+            --dir "$release_dir"
+          gh release download "v$VERSION" \
+            --pattern "SHA256SUMS" \
+            --dir "$release_dir"
+          release_target=$(gh release view "v$VERSION" --json targetCommitish --jq .targetCommitish)
+          test "$release_target" = "$GITHUB_SHA"
+          RELEASE_DIR="$release_dir" VERSION="$VERSION" node <<'NODE'
+          const { readFileSync, readdirSync, statSync } = require("node:fs");
+          const expectedArchives = [
+            `feynman-${process.env.VERSION}-linux-x64.tar.gz`,
+            `feynman-${process.env.VERSION}-linux-arm64.tar.gz`,
+            `feynman-${process.env.VERSION}-darwin-x64.tar.gz`,
+            `feynman-${process.env.VERSION}-darwin-arm64.tar.gz`,
+            `feynman-${process.env.VERSION}-win32-x64.zip`,
+          ].sort();
+          const expectedFiles = [...expectedArchives, "SHA256SUMS"].sort();
+          const files = readdirSync(process.env.RELEASE_DIR).sort();
+          if (
+            JSON.stringify(files) !== JSON.stringify(expectedFiles) ||
+            files.some((name) => statSync(`${process.env.RELEASE_DIR}/${name}`).size === 0)
+          ) {
+            throw new Error(`Release asset mismatch: ${files.join(", ")}`);
+          }
+          const checksumEntries = readFileSync(
+            `${process.env.RELEASE_DIR}/SHA256SUMS`,
+            "utf8",
+          ).trim().split(/\r?\n/).map((line) => {
+            const match = /^([a-f0-9]{64})\s+\*?(.+)$/.exec(line);
+            if (!match) throw new Error(`Invalid SHA256SUMS line: ${line}`);
+            return match[2];
+          }).sort();
+          if (JSON.stringify(checksumEntries) !== JSON.stringify(expectedArchives)) {
+            throw new Error(`SHA256SUMS entry mismatch: ${checksumEntries.join(", ")}`);
+          }
+          NODE
+
+          (cd "$release_dir" && sha256sum -c SHA256SUMS)
+          for archive in "$release_dir"/*.tar.gz; do
+            tar -tzf "$archive" >/dev/null
+          done
+          unzip -t "$release_dir/feynman-$VERSION-win32-x64.zip" >/dev/null
+
+          native_root="$RUNNER_TEMP/published-native"
+          mkdir -p "$native_root"
+          tar -xzf "$release_dir/feynman-$VERSION-linux-x64.tar.gz" -C "$native_root"
+          native="$native_root/feynman-$VERSION-linux-x64/feynman"
+          test "$("$native" --version | tail -1)" = "$VERSION"
+          "$native" --help >/dev/null
+          native_bundle_root="$native_root/feynman-$VERSION-linux-x64"
+          "$native_bundle_root/node/bin/node" \
+            "$native_bundle_root/app/scripts/verify-installed-runtime.mjs" \
+            "$native"
+          "$native_bundle_root/node/bin/node" \
+            "$native_bundle_root/app/scripts/verify-installed-docparser.mjs"
