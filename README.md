@@ -1,6 +1,7 @@
 ## propagate-yourself
 run acoustic simulations on human skulls with less compute and latency using better feature representation
 
+![](via-egnatia.png)
 
 ## setup
 install [uv](https://docs.astral.sh/uv/), then:
@@ -9,7 +10,7 @@ uv sync
 ```
 
 
-## run
+## quickstart
 
 
 ## tools
@@ -19,7 +20,7 @@ uv sync
 
 keys: `z` axial, `y` coronal, `x` sagittal (key = scrubbed axis)
 
-2) an evaluation tool for feynman research runs. it uses the [stanford helm](https://github.com/stanford-crfm/helm/blob/main/docs/code.md) design, tracking time and token usage:
+2) an evaluation tool for feynman research runs. it uses the [stanford helm](https://github.com/stanford-crfm/helm/blob/main/docs/code.md) design. time and token usage are tracked. [more information](tools/helm_mirror/design.md)
 
 `uv run helm-mirror run`
 
