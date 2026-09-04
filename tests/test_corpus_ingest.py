@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.corpus_ingest.corpus import PaperSeed, ingest_corpus, parse_markdown
-from tools.corpus_ingest.policy import run_policy
+from graphs.corpus_ingest.corpus import PaperSeed, ingest_corpus, parse_markdown
+from graphs.corpus_ingest.policy import run_policy
 
 
 class FakeResolver:
@@ -97,7 +97,7 @@ https://curius.app/example/collection
 
     def test_schema_is_minimal(self) -> None:
         schema = (
-            Path(__file__).parents[1] / "tools/corpus_ingest/schema.sql"
+            Path(__file__).parents[1] / "graphs/corpus_ingest/schema.sql"
         ).read_text()
         for field in (
             "id BIGSERIAL",

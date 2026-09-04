@@ -15,16 +15,17 @@ dependencies = [
     "numpy>=2.5.2",
     "psycopg[binary]>=3.2.10",
     "pyyaml>=6.0.3",
+    "scikit-learn>=1.5",
     "simpleitk>=2.5.6",
 ]
 
 [project.scripts]
-corpus-ingest = "tools.corpus_ingest.cli:main"
+corpus-ingest = "graphs.corpus_ingest.cli:main"
 helm-mirror = "tools.helm_mirror.cli:main"
-rwx-policy = "tools.corpus_ingest.policy_cli:main"
+rwx-policy = "graphs.corpus_ingest.policy_cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["tools"]
+packages = ["tools", "graphs"]
 
 [tool.uv]
 package = true
@@ -32,4 +33,7 @@ package = true
 [dependency-groups]
 dev = [
     "ruff>=0.16.5",
+]
+graph = [
+    "sentence-transformers>=3.0",
 ]

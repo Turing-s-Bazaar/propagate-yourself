@@ -39,7 +39,9 @@ https://curius.app/yoyo-yuan/physics-and-math-in-neuroscience
 - jack gallant
 - airan rag
 - https://snufa.net/2026/
--
+
+
+Andrii from Merge
 - 1. Rabut C, Yoo S, Hurt RC, Jin Z, Li H, Guo H, Ling B, Shapiro MG. Ultrasound Technologies for Imaging and Modulating Neural Activity. Neuron 108(1):93–110 (2020). DOI: 10.1016/j.neuron.2020.09.003. [https://www.cell.com/neuron/fulltext/S0896-6273(20)30703-0](https://www.cell.com/neuron/fulltext/S0896-6273(20)30703-0)
 - 2. Deffieux T, Demené C, Tanter M. Functional Ultrasound Imaging: A New Imaging Modality for Neuroscience. Neuroscience 474:110–121 (2021). DOI: 10.1016/j.neuroscience.2021.03.005. [https://www.sciencedirect.com/science/article/pii/S0306452221001214](https://www.sciencedirect.com/science/article/pii/S0306452221001214)
 - 3. Rabut C, Norman SL, Griggs WS, Russin JJ, Jann K, Christopoulos V, Liu C, Andersen RA, Shapiro MG. Functional ultrasound imaging of human brain activity through an acoustically transparent cranial window. Science Translational Medicine 16(749):eadj3143 (2024). DOI: 10.1126/scitranslmed.adj3143. [https://www.science.org/doi/10.1126/scitranslmed.adj3143](https://www.science.org/doi/10.1126/scitranslmed.adj3143)
@@ -52,3 +54,9 @@ https://curius.app/yoyo-yuan/physics-and-math-in-neuroscience
 surya ganguli
 https://www.annualreviews.org/content/journals/10.1146/annurev-neuro-062111-150410
 https://arxiv.org/abs/1301.7115
+
+Kenneth Shinnosuka
+https://pubmed.ncbi.nlm.nih.gov/40275098/
+https://www.sciencedirect.com/science/article/pii/S0896627326001728
+https://www.science.org/doi/10.1126/sciadv.aea8233
+https://www.nature.com/articles/s41565-025-01990-5
