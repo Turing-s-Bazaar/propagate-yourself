@@ -1,7 +1,8 @@
 ## propagate-yourself
-run acoustic simulations on human skulls with less compute and latency using better feature representation
+run acoustic simulations on human skulls with less compute, less latency, using better feature representation of the autoresearch process.
 
 ![](via-egnatia.png)
+
 
 ## setup
 install [uv](https://docs.astral.sh/uv/), then:
@@ -27,6 +28,32 @@ keys: `z` axial, `y` coronal, `x` sagittal (key = scrubbed axis)
 under the `tools/` directory, the problem set lives in `instructions`. you can configure runs in `run_specs.yaml`, evaluation results land in `outputs/`. the extensive feynman artifacts are in its own directory under `autoresearch/runs/`
 
 3) a graph ingestor, differentiator and evaluator
+
+a rough markdown corpus lives at `graphs/corpus/paper-dump.md`. it is parsed,
+resolved against openalex, and written to postgres. research taste is written by
+hand in `graphs/corpus_ingest/handwritten-policy.md` (heuristics + mental models).
+
+requires `just` and a postgres database with `DATABASE_URL` set.
+
+```bash
+just ingest                           # resolve paper-dump.md -> postgres
+just policy "focused ultrasound"      # top-5 papers + read/write/execute urges
+just run "focused ultrasound"         # ingest, then policy
+just test                             # run the test suite
+just lint                             # ruff check + format
+```
+
+optional specter2 embedding + clustering (install deps first):
+
+```bash
+just sync-graph
+uv run rwx-policy "focused ultrasound" --specter --out-dir graphs/outputs
+```
+
+`--specter` embeds papers and your handwritten policy with `allenai/specter2`,
+clusters them (pca + hdbscan), and writes `clusters.json`, `cluster-summary.md`,
+and `clusters-2d.png` under `--out-dir`.
+
 
 ## to stop a script
 `pkill -f view_ct.py`
