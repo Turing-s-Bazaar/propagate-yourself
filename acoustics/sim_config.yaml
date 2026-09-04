@@ -1,0 +1,84 @@
+# design mirroring https://www.brainstimjrnl.com/article/S1935-861X(24)00071-8/fulltext
+# propagate-yourself focused-ultrasound simulation config.
+# Parameter values copied from OpenwaterHealth/openlifu-python (k-Wave setup),
+# re-expressed for the jwave backend.
+
+# ---- Transducer description (reporting) ----
+transducer:
+  id: openlifu_1x400_evt1
+  name: "Open-LIFU 1x400 (evt1)"
+  manufacturer: "Openwater Health"
+  model: "openlifu_1x400_evt1"
+  centre_frequency_hz: 400600.0
+  geometry:
+    aperture_diameter_mm: 64.0
+    radius_of_curvature_mm: 63.2    # F# ~ 1
+
+# ---- Drive system description (reporting) ----
+drive_system:
+  manufacturer: "Openwater Health"
+  model: "Open-LIFU console"
+  coupling: "degassed water standoff"
+
+# ---- Drive system settings (reporting) ----
+drive_settings:
+  operating_frequency_hz: 400600.0
+  output_level: 1.0                   # pulse amplitude (AU)
+  focal_position_mm: [0.0, 0.0, 63.2]
+
+# ---- Free-field acoustic parameters (placeholders) ----
+free_field:
+  reference_position_mm: [0.0, 0.0, 0.0]
+  spatial_peak_pressure_MPa: null
+  spatial_peak_position_mm: null
+  focal_volume_3dB_mm: { axial: null, lateral: null }
+  focal_volume_6dB_mm: { axial: null, lateral: null }
+  source: "openwater/openlifu-python"
+
+# ---- Pulse timing parameters ----
+pulse:
+  frequency_hz: 400600.0
+  amplitude: 1.0
+  duration_s: null                     # null -> derive from cycles
+
+sequence:
+  pulse_interval_s: 1.0
+  pulse_count: 1
+  pulse_train_interval_s: 1.0
+  pulse_train_count: 1
+
+# ---- Simulation grid + time (copied from openlifu SimSetup defaults) ----
+sim_setup:
+  spacing: 1.0                         # mm
+  units: "mm"
+  x_extent: [-30.0, 30.0]              # mm -> 61 voxels
+  y_extent: [-30.0, 30.0]              # mm -> 61 voxels
+  z_extent: [-4.0, 60.0]               # mm -> 65 voxels
+  dt: 0.0                              # 0 -> auto (CFL)
+  t_end: 0.0                           # 0 -> auto (corner-to-corner)
+  c0: 1500.0                           # m/s, reference speed for CFL
+  cfl: 0.3
+
+# ---- Medium (materials copied verbatim from openlifu seg/material.py) ----
+medium:
+  pml_size: 20
+  alpha_power: 0.9                     # k-Wave power law (kept for parity; jwave
+                                       # time-domain solver is currently lossless)
+  materials:
+    water:    { sound_speed: 1500.0, density: 1000.0, attenuation: 0.0, specific_heat: 4182.0, thermal_conductivity: 0.598 }
+    tissue:   { sound_speed: 1540.0, density: 1000.0, attenuation: 0.0, specific_heat: 3600.0, thermal_conductivity: 0.5 }
+    skull:    { sound_speed: 4080.0, density: 1900.0, attenuation: 0.0, specific_heat: 1100.0, thermal_conductivity: 0.3 }
+    air:      { sound_speed: 344.0,  density: 1.25,   attenuation: 0.0, specific_heat: 1012.0, thermal_conductivity: 0.025 }
+    standoff: { sound_speed: 1420.0, density: 1000.0, attenuation: 1.0, specific_heat: 4182.0, thermal_conductivity: 0.598 }
+  # z-layered medium for the initial validation run (water | skull | tissue).
+  # Physical z in mm; unlisted voxels default to the first layer's material.
+  layers:
+    - { material: water,  z: [-4.0, 30.0] }
+    - { material: skull,  z: [30.0, 38.0] }
+    - { material: tissue, z: [38.0, 60.0] }
+
+# ---- Solver + recording ----
+simulation:
+  cycles: 5                            # tone-burst cycles (openlifu default: 20)
+  sensor_record: [p_max, p_min]        # p_min -> PNP, intensity derived
+  data_cast: single                    # jax float32
