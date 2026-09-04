@@ -10,6 +10,48 @@ install [uv](https://docs.astral.sh/uv/), then:
 uv sync
 ```
 
+install [just](https://github.com/casey/just) for the task recipes (optional, they wrap the commands below):
+```
+cargo install just
+```
+
+
+## commands
+
+```bash
+# ct viewer
+uv run python acoustics/view_ct.py
+
+# feynman research-run evaluation
+uv run helm-mirror run
+
+# corpus ingest -> postgres (needs DATABASE_URL)
+uv run corpus-ingest graphs/corpus/paper-dump.md
+
+# top-5 papers + read/write/execute urges
+uv run rwx-policy "focused ultrasound" [--state state.yaml] [--paper-count 5]
+
+# same, with spector2 embedding + pca/hdbscan clustering (needs just sync-graph)
+uv run rwx-policy "focused ultrasound" --specter --out-dir graphs/outputs
+
+# test + lint
+uv run python -m unittest discover -s tests
+uv run ruff check graphs tools tests
+```
+
+or via `just`:
+
+```bash
+just                    # list recipes
+just sync               # uv sync
+just sync-graph         # uv sync --group graph (spector2 + scikit-learn)
+just ingest             # corpus-ingest graphs/corpus/paper-dump.md
+just policy "focused ultrasound"
+just run "focused ultrasound"
+just test               # unittest discover -s tests
+just lint               # ruff check + format --check
+```
+
 
 ## quickstart
 
